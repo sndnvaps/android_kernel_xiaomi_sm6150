@@ -639,4 +639,5 @@ dtbs: $(addprefix $(obj)/../,$(dtb-y))
 endif
 endif
 endif
-clean-files	:= *.dtb *.dtbo
+MKDTIMG_FLAGS += --page_size=4096
+clean-files	:= *.dtb *.dtbo *.img

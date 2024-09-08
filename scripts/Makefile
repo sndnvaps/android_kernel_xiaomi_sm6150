@@ -47,6 +47,7 @@ subdir-y                     += mod
 subdir-$(CONFIG_SECURITY_SELINUX) += selinux
 subdir-$(CONFIG_DTC)         += dtc
 subdir-$(CONFIG_GDB_SCRIPTS) += gdb
+subdir-y					+= libufdt
 
 # Let clean descend into subdirs
 subdir-	+= basic kconfig package gcc-plugins
