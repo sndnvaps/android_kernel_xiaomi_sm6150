@@ -32,8 +32,9 @@
 ENTRY(arm64_relocate_new_kernel)
 
 	/* Setup the list loop variables. */
-	mov	x17, x1				/* x17 = kimage_start */
-	mov	x16, x0				/* x16 = kimage_head */
+	//mov	x17, x1				/* x17 = kimage_start */
+	//mov	x16, x0				/* x16 = kimage_head */
+	mov x16, arm64_kexec_kimage_head	/* x16 = list entry */
 	raw_dcache_line_size x15, x0		/* x15 = dcache line size */
 	mov	x14, xzr			/* x14 = entry ptr */
 	mov	x13, xzr			/* x13 = copy dest */
@@ -107,11 +108,12 @@ ENTRY(arm64_relocate_new_kernel)
 	isb
 
 	/* Start new image. */
-	mov	x0, xzr
+	ldr x4, arm64_kexec_kimage_start
+	ldr	x0, arm64_kexec_dtb_addr
 	mov	x1, xzr
 	mov	x2, xzr
 	mov	x3, xzr
-	br	x17
+	br	x4
 
 ENDPROC(arm64_relocate_new_kernel)
 
@@ -119,8 +121,30 @@ ENDPROC(arm64_relocate_new_kernel)
 
 .align 3	/* To keep the 64-bit values below naturally aligned. */
 
-.Lcopy_end:
-.org	KEXEC_CONTROL_PAGE_SIZE
+/* The machine_kexec routines set these variables. */
+
+/*
+ * arm64_kexec_kimage_start - Copy of image->start, the entry point of the new
+ * image.
+ */
+.globl arm64_kexec_kimage_start
+arm64_kexec_kimage_start:
+	.quad	0x0
+/*
+ * arm64_kexec_kimage_head - Copy of image->head, the list of kimage entries.
+ */
+.globl arm64_kexec_kimage_head
+arm64_kexec_kimage_head:
+	.quad	0x0
+
+/*
+ * arm64_kexec_dtb_addr - Physical address of a device tree.
+ */
+.globl arm64_kexec_dtb_addr
+arm64_kexec_dtb_addr:
+	.quad	0x0
+
+.Lrelocate_new_kernel_end:
 
 /*
  * arm64_relocate_new_kernel_size - Number of bytes to copy to the
@@ -128,4 +152,6 @@ ENDPROC(arm64_relocate_new_kernel)
  */
 .globl arm64_relocate_new_kernel_size
 arm64_relocate_new_kernel_size:
-	.quad	.Lcopy_end - arm64_relocate_new_kernel
+	.quad	.Lrelocate_new_kernel_end - arm64_relocate_new_kernel
+
+.org	KEXEC_CONTROL_PAGE_SIZE

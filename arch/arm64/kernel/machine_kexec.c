@@ -13,6 +13,9 @@
 #include <linux/irq.h>
 #include <linux/kernel.h>
 #include <linux/kexec.h>
+#include <linux/libfdt_env.h>
+#include <linux/of_fdt.h>
+#include <linux/uaccess.h>
 #include <linux/page-flags.h>
 #include <linux/smp.h>
 
@@ -25,9 +28,100 @@
 
 #include "cpu-reset.h"
 
+/* Bypass purgatory for debugging. */
+static const int bypass_purgatory = 1;
+
 /* Global variables for the arm64_relocate_new_kernel routine. */
 extern const unsigned char arm64_relocate_new_kernel[];
 extern const unsigned long arm64_relocate_new_kernel_size;
+extern unsigned long arm64_kexec_dtb_addr;
+extern unsigned long arm64_kexec_kimage_head;
+extern unsigned long arm64_kexec_kimage_start;
+
+/**
+ * kexec_is_kernel - Helper routine to check the kernel header signature.
+ */
+static bool kexec_is_kernel(const void *image)
+{
+	struct arm64_image_header {
+		uint8_t pe_sig[2];
+		uint16_t branch_code[3];
+		uint64_t text_offset;
+		uint64_t image_size;
+		uint8_t flags[8];
+		uint64_t reserved_1[3];
+		uint8_t magic[4];
+		uint32_t pe_header;
+	} h;
+        if (copy_from_user(&h, image, sizeof(struct arm64_image_header)))
+		return false;
+	if (!h.text_offset)
+		return false;
+	return (h.magic[0] == 'A'
+		&& h.magic[1] == 'R'
+		&& h.magic[2] == 'M'
+		&& h.magic[3] == 0x64U);
+}
+/**
+ * kexec_find_kernel_seg - Helper routine to find the kernel segment.
+ */
+static const struct kexec_segment *kexec_find_kernel_seg(
+	const struct kimage *kimage)
+{
+	int i;
+	for (i = 0; i < kimage->nr_segments; i++) {
+		if (kexec_is_kernel(kimage->segment[i].buf))
+			return &kimage->segment[i];
+	}
+	BUG();
+	return NULL;
+}
+
+/**
+ * kexec_is_dtb - Helper routine to check the device tree header signature.
+ */
+static bool kexec_is_dtb(const void *dtb)
+{
+	__be32 magic;
+	if (get_user(magic, (__be32 *)dtb))
+		return false;
+
+	return fdt32_to_cpu(magic) == OF_DT_HEADER;
+}
+
+
+/**
+ * kexec_find_dtb_seg - Helper routine to find the dtb segment.
+ */
+static const struct kexec_segment *kexec_find_dtb_seg(
+	const struct kimage *kimage)
+{
+	int i;
+	for (i = 0; i < kimage->nr_segments; i++) {
+		if (kexec_is_dtb(kimage->segment[i].buf))
+			return &kimage->segment[i];
+	}
+	BUG();
+	return NULL;
+}
+
+static struct bypass {
+	unsigned long kernel;
+	unsigned long dtb;
+} bypass;
+
+static void fill_bypass(const struct kimage *kimage)
+{
+	const struct kexec_segment *seg;
+	seg = kexec_find_kernel_seg(kimage);
+	BUG_ON(!seg || !seg->mem);
+	bypass.kernel = seg->mem;
+	seg = kexec_find_dtb_seg(kimage);
+	BUG_ON(!seg || !seg->mem);
+	bypass.dtb = seg->mem;
+	pr_debug("%s: kernel: %016lx\n", __func__, bypass.kernel);
+	pr_debug("%s: dtb:    %016lx\n", __func__, bypass.dtb);
+}
 
 /**
  * kexec_image_info - For debugging output.
@@ -69,7 +163,16 @@ void machine_kexec_cleanup(struct kimage *kimage)
  */
 int machine_kexec_prepare(struct kimage *kimage)
 {
+
 	kexec_image_info(kimage);
+	fill_bypass(kimage);
+	if (bypass_purgatory) {
+		arm64_kexec_kimage_start = bypass.kernel;
+		arm64_kexec_dtb_addr = bypass.dtb;
+	} else {
+		arm64_kexec_kimage_start = kimage->start;
+		arm64_kexec_dtb_addr = 0;
+	}
 
 	if (kimage->type != KEXEC_TYPE_CRASH && cpus_are_stuck_in_kernel()) {
 		pr_err("Can't kexec: CPUs are stuck in the kernel.\n");
@@ -157,6 +260,7 @@ void machine_kexec(struct kimage *kimage)
 	WARN(in_kexec_crash && (stuck_cpus || smp_crash_stop_failed()),
 		"Some CPUs may be stale, kdump will be unreliable.\n");
 
+	arm64_kexec_kimage_head = kimage->head;
 	reboot_code_buffer_phys = page_to_phys(kimage->control_code_page);
 	reboot_code_buffer = phys_to_virt(reboot_code_buffer_phys);
 
@@ -173,6 +277,13 @@ void machine_kexec(struct kimage *kimage)
 	pr_debug("%s:%d: relocate_new_kernel_size: 0x%lx(%lu) bytes\n",
 		__func__, __LINE__, arm64_relocate_new_kernel_size,
 		arm64_relocate_new_kernel_size);
+
+	pr_debug("%s:%d: kexec_dtb_addr:           %ld\n", __func__, __LINE__,
+		arm64_kexec_dtb_addr);
+	pr_debug("%s:%d: kexec_kimage_head:        %ld\n", __func__, __LINE__,
+		arm64_kexec_kimage_head);
+	pr_debug("%s:%d: kexec_kimage_start:       %ld\n", __func__, __LINE__,
+		arm64_kexec_kimage_start);
 
 	/*
 	 * Copy arm64_relocate_new_kernel to the reboot_code_buffer for use
