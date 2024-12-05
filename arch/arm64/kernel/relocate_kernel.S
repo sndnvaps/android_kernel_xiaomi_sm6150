@@ -41,7 +41,10 @@ ENTRY(arm64_relocate_new_kernel)
 	ldr	x22, =KEXEC_HB_PAGE_ADDR
 	ldr	x23, =(0xdeaf0000)
 	str	x23, [x22]
-
+	ldr	x24, arm64_kexec_hardboot
+	cbz	x24, first_not_hardboot
+	str	x23, [x22, #56]
+first_not_hardboot:
 	/* Setup the list loop variables. */
 	//mov	x17, x1				/* x17 = kimage_start */
 	//mov	x16, x0				/* x16 = kimage_head */
@@ -108,11 +111,15 @@ ENTRY(arm64_relocate_new_kernel)
 	/* entry = *ptr++ */
 	ldr	x16, [x14], #8
 
+	ldr	x24, arm64_kexec_hardboot
+	cbz	x24, second_not_hardboot
 	ldr	x22, =KEXEC_HB_PAGE_ADDR
-	ldr	x23, [x22]
-	add	x23, x23, #1
-	str	x23, [x22]
 
+	ldr	x23, [x22, #56]
+
+	add	x23, x23, #1
+	str	x23, [x22, #56]
+second_not_hardboot:
 
 	/* while (!(entry & DONE)) */
 	tbz	x16, IND_DONE_BIT, .Lloop
@@ -145,7 +152,7 @@ ENTRY(arm64_relocate_new_kernel)
 	mov	x3, xzr
 	br	x4
 
-	#ifdef CONFIG_KEXEC_HARDBOOT
+#ifdef CONFIG_KEXEC_HARDBOOT
 hardboot:
 	/* Stash boot arguments in hardboot page:
 	 * 0: KEXEC_HB_PAGE_MAGIC
@@ -155,7 +162,7 @@ hardboot:
 	ldr	x1, =KEXEC_HB_PAGE_MAGIC
 	str	x1, [x0]
 	/* Processor specific reboot code. */
-	/* MSM8994/Snapdragon 810 version. */
+	/* SM6150 version. */
 	ldr	x0, =MPM2_MPM_PS_HOLD
 	str	xzr, [x0]
 loop:	b	loop
