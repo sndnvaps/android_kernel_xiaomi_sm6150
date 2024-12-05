@@ -65,6 +65,9 @@
 #include <asm/xen/hypervisor.h>
 #include <asm/mmu_context.h>
 #include <asm/system_misc.h>
+#ifdef CONFIG_KEXEC_HARDBOOT
+#include <asm/kexec.h>
+#endif
 
 phys_addr_t __fdt_pointer __initdata;
 
@@ -488,3 +491,15 @@ static int __init register_kernel_offset_dumper(void)
 	return 0;
 }
 __initcall(register_kernel_offset_dumper);
+
+#ifdef CONFIG_KEXEC_HARDBOOT
+static int __init dumphardboot(void) {
+	unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
+	unsigned long *h = ioremap(hardboot_reserve, SZ_1M);
+	pr_info("Hardboot: %lx %lx %lx %lx %lx %lx %lx %lx\n",
+		h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
+	iounmap(h);
+	return 0;
+}
+arch_initcall(dumphardboot);
+#endif

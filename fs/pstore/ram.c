@@ -31,6 +31,7 @@
 #include <linux/io.h>
 #include <linux/ioport.h>
 #include <linux/platform_device.h>
+#include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/compiler.h>
 #include <linux/pstore_ram.h>
@@ -1012,8 +1013,22 @@ static int __init msm_register_ramoops_device(void)
 }
 core_initcall(msm_register_ramoops_device);
 
+#ifdef CONFIG_KEXEC_HARDBOOT
+// Hardboot: reserve 1MB of space 
+// before ramoops address of 0xa1600000
+void kexec_memory_reserve(void) {
+	unsigned long long mem_start = 0xa1500000;
+	memblock_reserve(mem_start, SZ_1M);
+}
+
+#endif
+
+
 static int __init ramoops_init(void)
 {
+#ifdef CONFIG_KEXEC_HARDBOOT
+	kexec_memory_reserve();
+#endif
 	ramoops_register_dummy();
 	return platform_driver_register(&ramoops_driver);
 }

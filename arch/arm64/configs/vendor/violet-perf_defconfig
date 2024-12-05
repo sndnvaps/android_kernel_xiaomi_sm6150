@@ -604,6 +604,7 @@ CONFIG_SECCOMP=y
 # CONFIG_PARAVIRT is not set
 # CONFIG_PARAVIRT_TIME_ACCOUNTING is not set
 CONFIG_KEXEC=y
+CONFIG_KEXEC_HARDBOOT=y
 
 # CONFIG_CRASH_DUMP is not set
 # CONFIG_XEN is not set
@@ -643,7 +644,9 @@ CONFIG_RANDOMIZE_MODULE_REGION_FULL=y
 #
 # Boot options
 #
-CONFIG_CMDLINE="cgroup_disable=pressure"
+# CONFIG_CMDLINE="cgroup_disable=pressure"
+# nokaslr -> 禁用内核地址空间布局随机，目的是测试kexec
+CONFIG_CMDLINE="cgroup_disable=pressure nokaslr"
 # CONFIG_CMDLINE_FROM_BOOTLOADER is not set
 CONFIG_CMDLINE_EXTEND=y
 # CONFIG_CMDLINE_FORCE is not set
