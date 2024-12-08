@@ -111,9 +111,9 @@ first_not_hardboot:
 	/* entry = *ptr++ */
 	ldr	x16, [x14], #8
 
-	ldr	x24, arm64_kexec_hardboot
-	cbz	x24, second_not_hardboot
-	ldr	x22, =KEXEC_HB_PAGE_ADDR
+	ldr	x24, arm64_kexec_hardboot  
+	cbz	x24, second_not_hardboot	//判断x24寄存器是否为0，若为0，跳转到second_not_hardboot标签处
+	ldr	x22, =KEXEC_HB_PAGE_ADDR	//
 
 	ldr	x23, [x22, #56]
 
@@ -132,8 +132,8 @@ second_not_hardboot:
 	isb
 
 #ifdef CONFIG_KEXEC_HARDBOOT
-	ldr	x0, arm64_kexec_hardboot
-	cbnz	x0, hardboot
+	ldr	x0, arm64_kexec_hardboot  // 将arm64_kexec_hardboot的值传给x0寄存器，（0，1）
+	cbnz	x0, hardboot			//如果寄存器x0的值不为0，跳转到hardboot 标签处，执行指令
 #endif
 	ldr	x22, =KEXEC_HB_PAGE_ADDR
 	ldr	x23, =(0xfeedf00d)

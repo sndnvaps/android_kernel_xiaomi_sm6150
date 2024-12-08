@@ -1016,19 +1016,23 @@ core_initcall(msm_register_ramoops_device);
 #ifdef CONFIG_KEXEC_HARDBOOT
 // Hardboot: reserve 1MB of space 
 // before ramoops address of 0xa1600000
-void kexec_memory_reserve(void) {
+static int __init kexec_memory_reserve(void) {
 	unsigned long long mem_start = 0xa1500000;
-	memblock_reserve(mem_start, SZ_1M);
+	int ret = memblock_remove(mem_start, SZ_1M);
+	//memblock_reserve(mem_start, SZ_1M);
+	if(!ret)
+		pr_info("Hardboot page reserved at %#x\n", mem_start);
+	else
+		pr_err("Failed to reserve space for hardboot page at %#x!\n", mem_start);
+	
+	return 0;
 }
-
+__initcall(kexec_memory_reserve);
 #endif
 
 
 static int __init ramoops_init(void)
 {
-#ifdef CONFIG_KEXEC_HARDBOOT
-	kexec_memory_reserve();
-#endif
 	ramoops_register_dummy();
 	return platform_driver_register(&ramoops_driver);
 }

@@ -126,8 +126,8 @@ ENTRY(stext)
 	ldr	x21, =KEXEC_HB_PAGE_ADDR
 	ldr	x22, [x21]
 	ldr	x23, =KEXEC_HB_PAGE_MAGIC
-	cmp	x22, x23
-	beq	setup_hardboot
+	cmp	x22, x23	//比较x22,x23寄存器的值，
+	beq	setup_hardboot	//如果x22,x23寄存器的值相等，就跳转到setup_hardboot标签处
 #endif
 	str	xzr, [x21, #40] // zero out booted-via-hardboot flag
 	ldr	x23, =(0xfeedf00d)

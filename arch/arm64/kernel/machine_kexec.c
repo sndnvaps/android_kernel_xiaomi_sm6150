@@ -121,7 +121,9 @@ static struct bypass {
 static void fill_bypass(const struct kimage *kimage)
 {
 	const struct kexec_segment *seg;
+	pr_debug("%s: %d\n",__func__,__LINE__);
 	seg = kexec_find_kernel_seg(kimage);
+	pr_debug("%s: %d\n",__func__,__LINE__);
 	BUG_ON(!seg || !seg->mem);
 	bypass.kernel = seg->mem;
 	seg = kexec_find_dtb_seg(kimage);
@@ -173,7 +175,9 @@ int machine_kexec_prepare(struct kimage *kimage)
 {
 	unsigned long *hardboot_page;
 	kexec_image_info(kimage);
+	pr_debug("machine_kexec_prepare line = %d\n", __LINE__);
 	fill_bypass(kimage);
+	pr_debug("machine_kexec_prepare line = %d\n", __LINE__);
 	if (bypass_purgatory) {
 		arm64_kexec_kimage_start = bypass.kernel;
 		arm64_kexec_dtb_addr = bypass.dtb;
@@ -379,9 +383,9 @@ void machine_kexec(struct kimage *kimage)
 			(PAGE_SIZE * 2);
 		unsigned long *hardboot_list_loc_virt = hardboot_map +
 			(PAGE_SIZE * 2);
-		// temp space is 64MB in front of hardboot reserve.
+		// temp space is 128MB in front of hardboot reserve.
 		// Must be big enough to hold kernel, initrd, and dtb.
-		unsigned long tempdest = hardboot_reserve - (SZ_1M * 64);
+		unsigned long tempdest = hardboot_reserve - (SZ_1M * 128);
 		// create new relocation list for post reboot reloc
 		// TODO: check for overflow of temp space and hardboot page
 		kexec_list_hardboot_create_post_reboot_list(kimage->head,
@@ -435,7 +439,7 @@ void machine_kexec(struct kimage *kimage)
 bool arch_kexec_is_hardboot_buffer_range(unsigned long start,
 	unsigned long end) {
 	unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
-	unsigned long tempdest = hardboot_reserve - (SZ_1M * 64);
+	unsigned long tempdest = hardboot_reserve - (SZ_1M * 128);
 	// reserve is the end, tempdest is the start of the buffer
 	return start < hardboot_reserve && end >= tempdest;
 }
