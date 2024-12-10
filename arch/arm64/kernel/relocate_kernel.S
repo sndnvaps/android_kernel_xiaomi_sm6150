@@ -42,13 +42,15 @@ ENTRY(arm64_relocate_new_kernel)
 	ldr	x23, =(0xdeaf0000)
 	str	x23, [x22]
 	ldr	x24, arm64_kexec_hardboot
-	cbz	x24, first_not_hardboot
+	cbz	x24, first_not_hardboot //判断x24寄存器是否为0，若为0，跳转到first_not_hardboot标签处
 	str	x23, [x22, #56]
 first_not_hardboot:
 	/* Setup the list loop variables. */
 	//mov	x17, x1				/* x17 = kimage_start */
 	//mov	x16, x0				/* x16 = kimage_head */
-	mov x16, arm64_kexec_kimage_head	/* x16 = list entry */
+	mov x17, x1					/* x17 = kimage_start */
+	ldr x16, arm64_kexec_kimage_head	/* x16 = list entry */
+	mov x16, x0					/* x16 = kimage_head */
 	raw_dcache_line_size x15, x0		/* x15 = dcache line size */
 	mov	x14, xzr			/* x14 = entry ptr */
 	mov	x13, xzr			/* x13 = copy dest */
@@ -140,17 +142,17 @@ second_not_hardboot:
 	str	x23, [x22]
 
 	/* Start new image. */
-	ldr x4, arm64_kexec_kimage_start
+	ldr x17, arm64_kexec_kimage_start
 	ldr	x0, arm64_kexec_dtb_addr
 
-	str	x4, [x22, #8]
+	str	x17, [x22, #8]
 	str	x0, [x22, #16]
 	str	xzr, [x22, #24]
 
 	mov	x1, xzr
 	mov	x2, xzr
 	mov	x3, xzr
-	br	x4
+	br	x17
 
 #ifdef CONFIG_KEXEC_HARDBOOT
 hardboot:
