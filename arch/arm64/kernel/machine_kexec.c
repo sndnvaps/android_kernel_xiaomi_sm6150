@@ -183,7 +183,12 @@ int machine_kexec_prepare(struct kimage *kimage)
 		arm64_kexec_dtb_addr = bypass.dtb;
 	} else {
 		arm64_kexec_kimage_start = kimage->start;
-		arm64_kexec_dtb_addr = 0;
+#ifdef CONFIG_KEXEC_HARDBOOT
+		if (kimage->hardboot)
+			arm64_kexec_dtb_addr = bypass.dtb;
+		else
+#endif
+			arm64_kexec_dtb_addr = 0;
 	}
 
 #ifdef CONFIG_KEXEC_HARDBOOT
@@ -361,47 +366,104 @@ void machine_kexec(struct kimage *kimage)
 	/*
 	 * Copy arm64_relocate_new_kernel to the reboot_code_buffer for use
 	 * after the kernel is shut down.
+	 *
+	 * For hardboot: we copy the kernel to temp space in C code (MMU on),
+	 * write magic to hardboot page, then use the PMIC/SCM hook for a
+	 * proper warm reset. After reboot, head.S finds the magic and jumps
+	 * to the post-reboot relocator at hardboot_page+4KB, which copies
+	 * from temp space back to final destinations and boots the kernel.
 	 */
-	memcpy(reboot_code_buffer, arm64_relocate_new_kernel,
-		arm64_relocate_new_kernel_size);
-
-	/* Flush the reboot_code_buffer in preparation for its execution. */
-	__flush_dcache_area(reboot_code_buffer, arm64_relocate_new_kernel_size);
-	flush_icache_range((uintptr_t)reboot_code_buffer,
-			   (uintptr_t)reboot_code_buffer +
-			   arm64_relocate_new_kernel_size);
-
 #ifdef CONFIG_KEXEC_HARDBOOT
 	if (kimage->hardboot) {
-		// hardboot reserve should be 1MB.
 		unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
 		void *hardboot_map = ioremap(hardboot_reserve, SZ_1M);
-		// post reboot reloc code is 4K inside the hardboot page
-		void* post_reboot_code_buffer = hardboot_map + PAGE_SIZE;
-		// post reboot reloc list is 8K after the hardboot page.
+		void *post_reboot_code_buffer = hardboot_map + PAGE_SIZE;
 		unsigned long post_reboot_list_loc = hardboot_reserve +
 			(PAGE_SIZE * 2);
 		unsigned long *hardboot_list_loc_virt = hardboot_map +
 			(PAGE_SIZE * 2);
-		// temp space is 128MB in front of hardboot reserve.
-		// Must be big enough to hold kernel, initrd, and dtb.
 		unsigned long tempdest = hardboot_reserve - (SZ_1M * 128);
-		// create new relocation list for post reboot reloc
-		// TODO: check for overflow of temp space and hardboot page
+		unsigned long *entry;
+		void *dest = NULL;
+
+		// Step 1: modify original list and create post-reboot list
 		kexec_list_hardboot_create_post_reboot_list(kimage->head,
 			hardboot_list_loc_virt, tempdest);
-		// setup post-reboot reloc code
+
+		// Step 2: walk the modified list and copy kernel to temp space
+		pr_info("Hardboot: copying kernel to temp space 0x%lx\n",
+			tempdest);
+		for (entry = &kimage->head; ; entry++) {
+			unsigned int flag = *entry &
+				(IND_DESTINATION | IND_INDIRECTION |
+				 IND_DONE | IND_SOURCE);
+			void *addr = phys_to_virt(*entry & PAGE_MASK);
+
+			switch (flag) {
+			case IND_INDIRECTION:
+				entry = (unsigned long *)addr - 1;
+				break;
+			case IND_DESTINATION:
+				dest = addr;
+				break;
+			case IND_SOURCE:
+				memcpy(dest, addr, PAGE_SIZE);
+				dest += PAGE_SIZE;
+				break;
+			case IND_DONE:
+				goto hardboot_done;
+			}
+		}
+hardboot_done:
+		pr_info("Hardboot: copy done, setting up hardboot page\n");
+
+		// Step 3: write magic + entry + dtb to hardboot page
+		{
+			unsigned long *hb = (unsigned long *)hardboot_map;
+			hb[0] = KEXEC_HB_PAGE_MAGIC;
+			hb[1] = arm64_kexec_kimage_start;
+			hb[2] = arm64_kexec_dtb_addr;
+		}
+
+		// Step 4: setup post-reboot relocator
 		arm64_kexec_kimage_head = IND_INDIRECTION | post_reboot_list_loc;
 		arm64_kexec_hardboot = 0;
-		// copy relocation code to hardboot page for post-reboot reloc
 		memcpy(post_reboot_code_buffer, arm64_relocate_new_kernel,
 			arm64_relocate_new_kernel_size);
-		// flush the entire hardboot page
+
+		// Step 5: flush everything
 		__flush_dcache_area(hardboot_map, SZ_1M);
-		// unmap the page
+		flush_icache_range((uintptr_t)post_reboot_code_buffer,
+			(uintptr_t)post_reboot_code_buffer +
+			arm64_relocate_new_kernel_size);
+
 		iounmap(hardboot_map);
-	}
+
+		// Step 6: call the PMIC/SCM hook to trigger warm reset
+		pr_info("Hardboot: triggering warm reset\n");
+		if (kexec_hardboot_hook)
+			kexec_hardboot_hook();
+
+		// If hook returns, fall through to standard reboot path
+		pr_info("Hardboot: hook returned, falling back\n");
+		memcpy(reboot_code_buffer, arm64_relocate_new_kernel,
+			arm64_relocate_new_kernel_size);
+		__flush_dcache_area(reboot_code_buffer,
+			arm64_relocate_new_kernel_size);
+		flush_icache_range((uintptr_t)reboot_code_buffer,
+			(uintptr_t)reboot_code_buffer +
+			arm64_relocate_new_kernel_size);
+	} else
 #endif
+	{
+		memcpy(reboot_code_buffer, arm64_relocate_new_kernel,
+			arm64_relocate_new_kernel_size);
+		__flush_dcache_area(reboot_code_buffer,
+			arm64_relocate_new_kernel_size);
+		flush_icache_range((uintptr_t)reboot_code_buffer,
+			(uintptr_t)reboot_code_buffer +
+			arm64_relocate_new_kernel_size);
+	}
 
 	/* Flush the kimage list and its buffers. */
 	kexec_list_flush(kimage);
@@ -410,11 +472,6 @@ void machine_kexec(struct kimage *kimage)
 	if ((kimage != kexec_crash_image) && (kimage->head & IND_DONE))
 		kexec_segment_flush(kimage);
 
-#ifdef CONFIG_KEXEC_HARDBOOT
-	/* Run any final machine-specific shutdown code. */
-	if (kimage->hardboot && kexec_hardboot_hook)
-		kexec_hardboot_hook();
-#endif
 	pr_info("Bye!\n");
 
 	/* Disable all DAIF exceptions. */

@@ -50,7 +50,6 @@ first_not_hardboot:
 	//mov	x16, x0				/* x16 = kimage_head */
 	mov x17, x1					/* x17 = kimage_start */
 	ldr x16, arm64_kexec_kimage_head	/* x16 = list entry */
-	mov x16, x0					/* x16 = kimage_head */
 	raw_dcache_line_size x15, x0		/* x15 = dcache line size */
 	mov	x14, xzr			/* x14 = entry ptr */
 	mov	x13, xzr			/* x13 = copy dest */
