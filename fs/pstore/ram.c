@@ -1018,13 +1018,13 @@ core_initcall(msm_register_ramoops_device);
 // before ramoops address of 0xa1600000
 static int __init kexec_memory_reserve(void) {
 	unsigned long long mem_start = 0xa1500000;
-	int ret = memblock_remove(mem_start, SZ_1M);
-	//memblock_reserve(mem_start, SZ_1M);
-	if(!ret)
-		pr_info("Hardboot page reserved at %#x\n", mem_start);
-	else
-		pr_err("Failed to reserve space for hardboot page at %#x!\n", mem_start);
-	
+    /* 该地址不在 System RAM 中，无需从 memblock 移除 */
+    /* 但确认它没有和其他已知保留区域冲突 */
+    if (memblock_is_region_reserved(mem_start, SZ_1M))
+        pr_warn("Hardboot page at %#llx overlaps existing reservation!\n", mem_start);
+    else
+        pr_info("Hardboot page at %#llx (outside System RAM, no memblock action needed)\n", mem_start);
+
 	return 0;
 }
 __initcall(kexec_memory_reserve);
