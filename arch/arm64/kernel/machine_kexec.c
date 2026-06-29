@@ -81,7 +81,7 @@ static const struct kexec_segment *kexec_find_kernel_seg(
 		if (kexec_is_kernel(kimage->segment[i].buf))
 			return &kimage->segment[i];
 	}
-	BUG();
+	pr_err("No kernel segment found!\n");
 	return NULL;
 }
 
@@ -109,7 +109,7 @@ static const struct kexec_segment *kexec_find_dtb_seg(
 		if (kexec_is_dtb(kimage->segment[i].buf))
 			return &kimage->segment[i];
 	}
-	BUG();
+	pr_err("No DTB segment found!\n");
 	return NULL;
 }
 
@@ -121,16 +121,26 @@ static struct bypass {
 static void fill_bypass(const struct kimage *kimage)
 {
 	const struct kexec_segment *seg;
-	pr_debug("%s: %d\n",__func__,__LINE__);
+	pr_info("%s: finding kernel seg\n", __func__);
 	seg = kexec_find_kernel_seg(kimage);
-	pr_debug("%s: %d\n",__func__,__LINE__);
-	BUG_ON(!seg || !seg->mem);
+	if (!seg || !seg->mem) {
+		pr_err("%s: no kernel segment, bypass disabled\n", __func__);
+		bypass.kernel = 0;
+		bypass.dtb = 0;
+		return;
+	}
 	bypass.kernel = seg->mem;
+	pr_info("%s: kernel=0x%lx, finding dtb seg\n", __func__, seg->mem);
 	seg = kexec_find_dtb_seg(kimage);
-	BUG_ON(!seg || !seg->mem);
+	if (!seg || !seg->mem) {
+		pr_err("%s: no dtb segment, bypass disabled\n", __func__);
+		bypass.kernel = 0;
+		bypass.dtb = 0;
+		return;
+	}
 	bypass.dtb = seg->mem;
-	pr_debug("%s: kernel: %016lx\n", __func__, bypass.kernel);
-	pr_debug("%s: dtb:    %016lx\n", __func__, bypass.dtb);
+	pr_info("%s: kernel: %016lx dtb: %016lx\n", __func__,
+		bypass.kernel, bypass.dtb);
 }
 
 /**
@@ -175,29 +185,38 @@ int machine_kexec_prepare(struct kimage *kimage)
 {
 	unsigned long *hardboot_page;
 	kexec_image_info(kimage);
-	pr_debug("machine_kexec_prepare line = %d\n", __LINE__);
+	pr_info("machine_kexec_prepare: start\n");
 	fill_bypass(kimage);
-	pr_debug("machine_kexec_prepare line = %d\n", __LINE__);
+	pr_info("machine_kexec_prepare: after fill_bypass\n");
 	if (bypass_purgatory) {
 		arm64_kexec_kimage_start = bypass.kernel;
 		arm64_kexec_dtb_addr = bypass.dtb;
+		pr_info("machine_kexec_prepare: bypass, kernel=%lx dtb=%lx\n",
+			bypass.kernel, bypass.dtb);
 	} else {
 		arm64_kexec_kimage_start = kimage->start;
 #ifdef CONFIG_KEXEC_HARDBOOT
-		if (kimage->hardboot)
+		if (kimage->hardboot) {
 			arm64_kexec_dtb_addr = bypass.dtb;
-		else
+			pr_info("machine_kexec_prepare: hardboot, kernel=%lx dtb=%lx\n",
+				bypass.kernel, bypass.dtb);
+		} else
 #endif
 			arm64_kexec_dtb_addr = 0;
 	}
 
 #ifdef CONFIG_KEXEC_HARDBOOT
 	arm64_kexec_hardboot = kimage->hardboot;
+	pr_info("machine_kexec_prepare: hardboot=%d\n", kimage->hardboot);
 
-	// debug; please remove
 	hardboot_page = ioremap(KEXEC_HB_PAGE_ADDR, SZ_1M);
-	pr_info("Last hardboot status: %lx\n", hardboot_page[0]);
-	iounmap(hardboot_page);
+	if (!hardboot_page) {
+		pr_err("machine_kexec_prepare: ioremap failed for 0x%x\n",
+			KEXEC_HB_PAGE_ADDR);
+	} else {
+		pr_info("Last hardboot status: %lx\n", hardboot_page[0]);
+		iounmap(hardboot_page);
+	}
 #endif
 	if (kimage->type != KEXEC_TYPE_CRASH && cpus_are_stuck_in_kernel()) {
 		pr_err("Can't kexec: CPUs are stuck in the kernel.\n");
