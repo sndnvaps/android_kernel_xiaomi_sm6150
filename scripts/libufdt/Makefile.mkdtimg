@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0
+# Created by sndnvaps<admin@sndnvaps.com> 2024/09/08
+
+# Directly compile in libfdt from dtc-aosp instead of linking to libfdt
+LIBFDT_SRCS := fdt.c fdt_ro.c fdt_wip.c fdt_sw.c fdt_rw.c fdt_strerror.c \
+                fdt_empty_tree.c fdt_addresses.c fdt_overlay.c fdt_check.c acpi.c
+LIBFDT_SRCS := $(addprefix ../dtc-aosp/dtc/libfdt/,$(LIBFDT_SRCS))
+LIBFDT_OBJS := $(LIBFDT_SRCS:%.c=%.o)
+
+# Sources for mkdtimg
+MKDTIMG_SRCS :=  mkdtimg.c mkdtimg_cfg_create.c \
+                mkdtimg_core.c mkdtimg_dump.c dt_table.c
+MKDTIMG_SRCS := $(addprefix utils/src/,$(MKDTIMG_SRCS))          
+MKDTIMG_SRCS += sysdeps/libufdt_sysdeps_posix.c
+MKDTIMG_OBJS := $(MKDTIMG_SRCS:%.c=%.o)
+MKDTIMG_OBJS += $(LIBFDT_OBJS)

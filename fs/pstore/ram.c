@@ -31,11 +31,13 @@
 #include <linux/io.h>
 #include <linux/ioport.h>
 #include <linux/platform_device.h>
+#include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/compiler.h>
 #include <linux/pstore_ram.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/of_reserved_mem.h>
 #include <linux/memblock.h>
 
 #define RAMOOPS_KERNMSG_HDR "===="
@@ -691,6 +693,7 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 			    struct ramoops_platform_data *pdata)
 {
 	struct device_node *of_node = pdev->dev.of_node;
+	struct reserved_mem *rmem;
 	struct resource *res;
 	u32 value;
 	int ret;
@@ -699,13 +702,20 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
-		dev_err(&pdev->dev,
-			"failed to locate DT /reserved-memory resource\n");
-		return -EINVAL;
+		rmem = of_reserved_mem_lookup(of_node);
+		if (rmem) {
+			pdata->mem_size = rmem->size;
+			pdata->mem_address = rmem->base;
+		} else {
+			dev_err(&pdev->dev,
+				"failed to locate DT /reserved-memory resource\n");
+			return -EINVAL;
+		}
+	} else {
+		pdata->mem_size = resource_size(res);
+		pdata->mem_address = res->start;
 	}
 
-	pdata->mem_size = resource_size(res);
-	pdata->mem_address = res->start;
 	pdata->mem_type = of_property_read_bool(of_node, "unbuffered");
 	pdata->dump_oops = !of_property_read_bool(of_node, "no-dump-oops");
 
@@ -768,11 +778,12 @@ static int ramoops_probe(struct platform_device *pdev)
 		err = -EINVAL;
 		goto fail_out;
 	}
-
 	if (!pdata->mem_size || (!pdata->record_size && !pdata->console_size &&
 			!pdata->ftrace_size && !pdata->pmsg_size)) {
 		pr_err("The memory size and the record/console size must be "
 			"non-zero\n");
+		pr_info("mem_size = 0x%lx, record_size = 0x%lx, console_size = 0x%lx, ftrace_size = 0x%lx, pmsg_size = 0x%lx, ecc_size = %d\n",
+		pdata->mem_size, pdata->record_size, pdata->console_size, pdata->ftrace_size, pdata->pmsg_size, pdata->ecc_info.ecc_size);
 		err = -EINVAL;
 		goto fail_out;
 	}
@@ -974,6 +985,7 @@ static struct platform_device ramoops_dev  = {
 	},
 };
 
+//CONFIG_CMDLINE="ramoops_memreserve=4M"
 static int __init ramoops_memreserve(char *p)
 {
 	unsigned long size;
@@ -983,7 +995,7 @@ static int __init ramoops_memreserve(char *p)
 
 	size = memparse(p, &p) & PAGE_MASK;
 	ramoops_data.mem_size = size;
-	ramoops_data.mem_address = 0xB0000000;
+	ramoops_data.mem_address =  memblock_end_of_DRAM() - size;
 	ramoops_data.console_size = size / 2;
 	ramoops_data.pmsg_size = size / 2;
 	ramoops_data.dump_oops = 1;
@@ -1007,6 +1019,24 @@ static int __init msm_register_ramoops_device(void)
 	return 0;
 }
 core_initcall(msm_register_ramoops_device);
+
+#ifdef CONFIG_KEXEC_HARDBOOT
+// Hardboot: reserve 1MB of space 
+// before ramoops address of 0xa1600000
+static int __init kexec_memory_reserve(void) {
+	unsigned long long mem_start = 0xa1500000;
+    /* 该地址不在 System RAM 中，无需从 memblock 移除 */
+    /* 但确认它没有和其他已知保留区域冲突 */
+    if (memblock_is_region_reserved(mem_start, SZ_1M))
+        pr_warn("Hardboot page at %#llx overlaps existing reservation!\n", mem_start);
+    else
+        pr_info("Hardboot page at %#llx (outside System RAM, no memblock action needed)\n", mem_start);
+
+	return 0;
+}
+__initcall(kexec_memory_reserve);
+#endif
+
 
 static int __init ramoops_init(void)
 {

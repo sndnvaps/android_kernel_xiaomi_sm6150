@@ -13,6 +13,9 @@
 #include <linux/irq.h>
 #include <linux/kernel.h>
 #include <linux/kexec.h>
+#include <linux/libfdt_env.h>
+#include <linux/of_fdt.h>
+#include <linux/uaccess.h>
 #include <linux/page-flags.h>
 #include <linux/smp.h>
 
@@ -25,9 +28,120 @@
 
 #include "cpu-reset.h"
 
+#ifdef CONFIG_KEXEC_HARDBOOT
+#include <asm/kexec.h>
+#endif
+
+/* Bypass purgatory for debugging. */
+static const int bypass_purgatory = 1;
+
 /* Global variables for the arm64_relocate_new_kernel routine. */
 extern const unsigned char arm64_relocate_new_kernel[];
 extern const unsigned long arm64_relocate_new_kernel_size;
+extern unsigned long arm64_kexec_dtb_addr;
+extern unsigned long arm64_kexec_kimage_head;
+extern unsigned long arm64_kexec_kimage_start;
+#ifdef CONFIG_KEXEC_HARDBOOT
+extern unsigned long arm64_kexec_hardboot;
+void (*kexec_hardboot_hook)(void);
+#endif
+
+/**
+ * kexec_is_kernel - Helper routine to check the kernel header signature.
+ */
+static bool kexec_is_kernel(const void *image)
+{
+	struct arm64_image_header {
+		uint8_t pe_sig[2];
+		uint16_t branch_code[3];
+		uint64_t text_offset;
+		uint64_t image_size;
+		uint8_t flags[8];
+		uint64_t reserved_1[3];
+		uint8_t magic[4];
+		uint32_t pe_header;
+	} h;
+        if (copy_from_user(&h, image, sizeof(struct arm64_image_header)))
+		return false;
+	if (!h.text_offset)
+		return false;
+	return (h.magic[0] == 'A'
+		&& h.magic[1] == 'R'
+		&& h.magic[2] == 'M'
+		&& h.magic[3] == 0x64U);
+}
+/**
+ * kexec_find_kernel_seg - Helper routine to find the kernel segment.
+ */
+static const struct kexec_segment *kexec_find_kernel_seg(
+	const struct kimage *kimage)
+{
+	int i;
+	for (i = 0; i < kimage->nr_segments; i++) {
+		if (kexec_is_kernel(kimage->segment[i].buf))
+			return &kimage->segment[i];
+	}
+	pr_err("No kernel segment found!\n");
+	return NULL;
+}
+
+/**
+ * kexec_is_dtb - Helper routine to check the device tree header signature.
+ */
+static bool kexec_is_dtb(const void *dtb)
+{
+	__be32 magic;
+	if (get_user(magic, (__be32 *)dtb))
+		return false;
+
+	return fdt32_to_cpu(magic) == OF_DT_HEADER;
+}
+
+
+/**
+ * kexec_find_dtb_seg - Helper routine to find the dtb segment.
+ */
+static const struct kexec_segment *kexec_find_dtb_seg(
+	const struct kimage *kimage)
+{
+	int i;
+	for (i = 0; i < kimage->nr_segments; i++) {
+		if (kexec_is_dtb(kimage->segment[i].buf))
+			return &kimage->segment[i];
+	}
+	pr_err("No DTB segment found!\n");
+	return NULL;
+}
+
+static struct bypass {
+	unsigned long kernel;
+	unsigned long dtb;
+} bypass;
+
+static void fill_bypass(const struct kimage *kimage)
+{
+	const struct kexec_segment *seg;
+	pr_info("%s: finding kernel seg\n", __func__);
+	seg = kexec_find_kernel_seg(kimage);
+	if (!seg || !seg->mem) {
+		pr_err("%s: no kernel segment, bypass disabled\n", __func__);
+		bypass.kernel = 0;
+		bypass.dtb = 0;
+		return;
+	}
+	bypass.kernel = seg->mem;
+	pr_info("%s: kernel=0x%lx, finding dtb seg\n", __func__, seg->mem);
+	seg = kexec_find_dtb_seg(kimage);
+	if (!seg || !seg->mem) {
+		pr_err("%s: no dtb segment, bypass disabled\n", __func__);
+		bypass.kernel = 0;
+		bypass.dtb = 0;
+		return;
+	}
+	bypass.dtb = seg->mem;
+	pr_info("%s: kernel: %016lx dtb: %016lx\n", __func__,
+		bypass.kernel, bypass.dtb);
+}
 
 /**
  * kexec_image_info - For debugging output.
@@ -69,8 +183,41 @@ void machine_kexec_cleanup(struct kimage *kimage)
  */
 int machine_kexec_prepare(struct kimage *kimage)
 {
+	unsigned long *hardboot_page;
 	kexec_image_info(kimage);
+	pr_info("machine_kexec_prepare: start\n");
+	fill_bypass(kimage);
+	pr_info("machine_kexec_prepare: after fill_bypass\n");
+	if (bypass_purgatory) {
+		arm64_kexec_kimage_start = bypass.kernel;
+		arm64_kexec_dtb_addr = bypass.dtb;
+		pr_info("machine_kexec_prepare: bypass, kernel=%lx dtb=%lx\n",
+			bypass.kernel, bypass.dtb);
+	} else {
+		arm64_kexec_kimage_start = kimage->start;
+#ifdef CONFIG_KEXEC_HARDBOOT
+		if (kimage->hardboot) {
+			arm64_kexec_dtb_addr = bypass.dtb;
+			pr_info("machine_kexec_prepare: hardboot, kernel=%lx dtb=%lx\n",
+				bypass.kernel, bypass.dtb);
+		} else
+#endif
+			arm64_kexec_dtb_addr = 0;
+	}
 
+#ifdef CONFIG_KEXEC_HARDBOOT
+	arm64_kexec_hardboot = kimage->hardboot;
+	pr_info("machine_kexec_prepare: hardboot=%d\n", kimage->hardboot);
+
+	hardboot_page = ioremap(KEXEC_HB_PAGE_ADDR, SZ_1M);
+	if (!hardboot_page) {
+		pr_err("machine_kexec_prepare: ioremap failed for 0x%x\n",
+			KEXEC_HB_PAGE_ADDR);
+	} else {
+		pr_info("Last hardboot status: %lx\n", hardboot_page[0]);
+		iounmap(hardboot_page);
+	}
+#endif
 	if (kimage->type != KEXEC_TYPE_CRASH && cpus_are_stuck_in_kernel()) {
 		pr_err("Can't kexec: CPUs are stuck in the kernel.\n");
 		return -EBUSY;
@@ -116,6 +263,59 @@ static void kexec_list_flush(struct kimage *kimage)
 	}
 }
 
+#ifdef CONFIG_KEXEC_HARDBOOT
+/**
+ * kexec_list_hardboot_create_post_reboot_list -
+ * modify existing destination list to copy kernel to temp region;
+ * create new destination list in hardboot page to copy from temp region
+ * to final location
+ */
+static void kexec_list_hardboot_create_post_reboot_list(
+	unsigned long kimage_head, unsigned long *newlist_start,
+	unsigned long tempdest_phys)
+{
+	/* so the entries are in the format:
+	 * IND_DESTINATION -> where to go
+	 * IND_SOURCE -> where to read one page
+	 * IND_SOURCE -> where to read the next page (and so on)
+	 * For existing: rewrite IND_DESTINATION to store to temp location; leave IND_SOURCE intact
+	 * For new: copy original IND_DESTINATION, rewrite new IND_SOURCE to read from temp location
+	 * We do not copy indirection (new list will be flat)
+	 */
+	void *dest;
+	unsigned long *entry;
+	unsigned long *newlist = newlist_start;
+	for (entry = &kimage_head, dest = NULL; ; entry++) {
+		unsigned int flag = *entry &
+			(IND_DESTINATION | IND_INDIRECTION | IND_DONE |
+			IND_SOURCE);
+		void *addr = phys_to_virt(*entry & PAGE_MASK);
+		switch (flag) {
+		case IND_INDIRECTION:
+			entry = (unsigned long *)addr - 1;
+			break;
+		case IND_DESTINATION:
+			// new list: copy original IND_DESTINATION
+			*newlist++ = *entry;
+			// old list: rewrite to store to temp location
+			*entry = flag | tempdest_phys;
+			break;
+		case IND_SOURCE:
+			// new list: rewrite to read from temp location
+			*newlist++ = flag | tempdest_phys;
+			// new list: add to new temp destination address
+			tempdest_phys += PAGE_SIZE;
+			break;
+		case IND_DONE:
+			*newlist++ = *entry; // new list: copy original IND_DONE
+			return;
+		default:
+			BUG();
+		}
+	}
+}
+#endif
+
 /**
  * kexec_segment_flush - Helper to flush the kimage segments to PoC.
  */
@@ -157,6 +357,7 @@ void machine_kexec(struct kimage *kimage)
 	WARN(in_kexec_crash && (stuck_cpus || smp_crash_stop_failed()),
 		"Some CPUs may be stale, kdump will be unreliable.\n");
 
+	arm64_kexec_kimage_head = kimage->head;
 	reboot_code_buffer_phys = page_to_phys(kimage->control_code_page);
 	reboot_code_buffer = phys_to_virt(reboot_code_buffer_phys);
 
@@ -174,18 +375,114 @@ void machine_kexec(struct kimage *kimage)
 		__func__, __LINE__, arm64_relocate_new_kernel_size,
 		arm64_relocate_new_kernel_size);
 
+	pr_debug("%s:%d: kexec_dtb_addr:           %ld\n", __func__, __LINE__,
+		arm64_kexec_dtb_addr);
+	pr_debug("%s:%d: kexec_kimage_head:        %ld\n", __func__, __LINE__,
+		arm64_kexec_kimage_head);
+	pr_debug("%s:%d: kexec_kimage_start:       %ld\n", __func__, __LINE__,
+		arm64_kexec_kimage_start);
+
 	/*
 	 * Copy arm64_relocate_new_kernel to the reboot_code_buffer for use
 	 * after the kernel is shut down.
+	 *
+	 * For hardboot: we copy the kernel to temp space in C code (MMU on),
+	 * write magic to hardboot page, then use the PMIC/SCM hook for a
+	 * proper warm reset. After reboot, head.S finds the magic and jumps
+	 * to the post-reboot relocator at hardboot_page+4KB, which copies
+	 * from temp space back to final destinations and boots the kernel.
 	 */
-	memcpy(reboot_code_buffer, arm64_relocate_new_kernel,
-		arm64_relocate_new_kernel_size);
+#ifdef CONFIG_KEXEC_HARDBOOT
+	if (kimage->hardboot) {
+		unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
+		void *hardboot_map = ioremap(hardboot_reserve, SZ_1M);
+		void *post_reboot_code_buffer = hardboot_map + PAGE_SIZE;
+		unsigned long post_reboot_list_loc = hardboot_reserve +
+			(PAGE_SIZE * 2);
+		unsigned long *hardboot_list_loc_virt = hardboot_map +
+			(PAGE_SIZE * 2);
+		unsigned long tempdest = hardboot_reserve - (SZ_1M * 128);
+		unsigned long *entry;
+		void *dest = NULL;
 
-	/* Flush the reboot_code_buffer in preparation for its execution. */
-	__flush_dcache_area(reboot_code_buffer, arm64_relocate_new_kernel_size);
-	flush_icache_range((uintptr_t)reboot_code_buffer,
-			   (uintptr_t)reboot_code_buffer +
-			   arm64_relocate_new_kernel_size);
+		// Step 1: modify original list and create post-reboot list
+		kexec_list_hardboot_create_post_reboot_list(kimage->head,
+			hardboot_list_loc_virt, tempdest);
+
+		// Step 2: walk the modified list and copy kernel to temp space
+		pr_info("Hardboot: copying kernel to temp space 0x%lx\n",
+			tempdest);
+		for (entry = &kimage->head; ; entry++) {
+			unsigned int flag = *entry &
+				(IND_DESTINATION | IND_INDIRECTION |
+				 IND_DONE | IND_SOURCE);
+			void *addr = phys_to_virt(*entry & PAGE_MASK);
+
+			switch (flag) {
+			case IND_INDIRECTION:
+				entry = (unsigned long *)addr - 1;
+				break;
+			case IND_DESTINATION:
+				dest = addr;
+				break;
+			case IND_SOURCE:
+				memcpy(dest, addr, PAGE_SIZE);
+				dest += PAGE_SIZE;
+				break;
+			case IND_DONE:
+				goto hardboot_done;
+			}
+		}
+hardboot_done:
+		pr_info("Hardboot: copy done, setting up hardboot page\n");
+
+		// Step 3: write magic + entry + dtb to hardboot page
+		{
+			unsigned long *hb = (unsigned long *)hardboot_map;
+			hb[0] = KEXEC_HB_PAGE_MAGIC;
+			hb[1] = arm64_kexec_kimage_start;
+			hb[2] = arm64_kexec_dtb_addr;
+		}
+
+		// Step 4: setup post-reboot relocator
+		arm64_kexec_kimage_head = IND_INDIRECTION | post_reboot_list_loc;
+		arm64_kexec_hardboot = 0;
+		memcpy(post_reboot_code_buffer, arm64_relocate_new_kernel,
+			arm64_relocate_new_kernel_size);
+
+		// Step 5: flush everything
+		__flush_dcache_area(hardboot_map, SZ_1M);
+		flush_icache_range((uintptr_t)post_reboot_code_buffer,
+			(uintptr_t)post_reboot_code_buffer +
+			arm64_relocate_new_kernel_size);
+
+		iounmap(hardboot_map);
+
+		// Step 6: call the PMIC/SCM hook to trigger warm reset
+		pr_info("Hardboot: triggering warm reset\n");
+		if (kexec_hardboot_hook)
+			kexec_hardboot_hook();
+
+		// If hook returns, fall through to standard reboot path
+		pr_info("Hardboot: hook returned, falling back\n");
+		memcpy(reboot_code_buffer, arm64_relocate_new_kernel,
+			arm64_relocate_new_kernel_size);
+		__flush_dcache_area(reboot_code_buffer,
+			arm64_relocate_new_kernel_size);
+		flush_icache_range((uintptr_t)reboot_code_buffer,
+			(uintptr_t)reboot_code_buffer +
+			arm64_relocate_new_kernel_size);
+	} else
+#endif
+	{
+		memcpy(reboot_code_buffer, arm64_relocate_new_kernel,
+			arm64_relocate_new_kernel_size);
+		__flush_dcache_area(reboot_code_buffer,
+			arm64_relocate_new_kernel_size);
+		flush_icache_range((uintptr_t)reboot_code_buffer,
+			(uintptr_t)reboot_code_buffer +
+			arm64_relocate_new_kernel_size);
+	}
 
 	/* Flush the kimage list and its buffers. */
 	kexec_list_flush(kimage);
@@ -213,6 +510,16 @@ void machine_kexec(struct kimage *kimage)
 
 	BUG(); /* Should never get here. */
 }
+
+#ifdef CONFIG_KEXEC_HARDBOOT
+bool arch_kexec_is_hardboot_buffer_range(unsigned long start,
+	unsigned long end) {
+	unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
+	unsigned long tempdest = hardboot_reserve - (SZ_1M * 128);
+	// reserve is the end, tempdest is the start of the buffer
+	return start < hardboot_reserve && end >= tempdest;
+}
+#endif
 
 static void machine_kexec_mask_interrupts(void)
 {

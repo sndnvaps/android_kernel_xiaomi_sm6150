@@ -415,26 +415,28 @@ static void sde_hdcp_2x_cleanup_work(struct kthread_work *work)
 	sde_hdcp_2x_clean(hdcp);
 }
 
+#define HDCP_MIN_ENC_LEVEL_0 0
+#define HDCP_MIN_ENC_LEVEL_1 1
+#define HDCP_MIN_ENC_LEVEL_2 2
+
 static u8 sde_hdcp_2x_stream_type(u8 min_enc_level)
 {
 	u8 stream_type = 0;
-	u8 const hdcp_min_enc_level_0 = 0, hdcp_min_enc_level_1 = 1,
-	   hdcp_min_enc_level_2 = 2;
 	u8 const stream_type_0 = 0, stream_type_1 = 1;
-
-	switch (min_enc_level) {
-	case hdcp_min_enc_level_0:
-	case hdcp_min_enc_level_1:
+	int level = (int)min_enc_level;
+	switch (level) {
+	case HDCP_MIN_ENC_LEVEL_0:
+	case HDCP_MIN_ENC_LEVEL_1:
 		stream_type = stream_type_0;
 		break;
-	case hdcp_min_enc_level_2:
+	case HDCP_MIN_ENC_LEVEL_2:
 		stream_type = stream_type_1;
 		break;
 	default:
 		stream_type = stream_type_0;
 		break;
 	}
-
+	
 	pr_debug("min_enc_level = %u, type = %u", min_enc_level, stream_type);
 
 	return stream_type;

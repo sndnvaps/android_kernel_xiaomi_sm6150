@@ -28,6 +28,13 @@
 
 #define KEXEC_ARCH KEXEC_ARCH_AARCH64
 
+
+#ifdef CONFIG_KEXEC_HARDBOOT
+#define KEXEC_HB_PAGE_MAGIC 0x4a5db007
+// Hardboot: for Xiaomi Note7(Violet). Address reserved in pstore/ram.c
+#define KEXEC_HB_PAGE_ADDR 0xa1500000
+#endif
+
 #ifndef __ASSEMBLY__
 
 /**
@@ -91,6 +98,10 @@ extern void crash_post_resume(void);
 static inline bool crash_is_nosave(unsigned long pfn) {return false; }
 static inline void crash_prepare_suspend(void) {}
 static inline void crash_post_resume(void) {}
+#endif
+
+#ifdef CONFIG_KEXEC_HARDBOOT
+extern void (*kexec_hardboot_hook)(void);
 #endif
 
 #endif /* __ASSEMBLY__ */

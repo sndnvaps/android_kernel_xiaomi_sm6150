@@ -56,8 +56,12 @@
 &reserved_memory {
     ramoops: ramoops@a1600000 {
         compatible = "ramoops";
-        reg = <0 0xa1600000 0 0x800000>;
-        console-size = <0x400000>;
-        pmsg-size = <0x400000>;
+        reg = <0 0xa1600000 0 0xf00000>;
+        record-size = <0x200000>;
+        console-size = <0x200000>;
+        ftrace-size = <0x200000>;
+        pmsg-size = <0x200000>;
+        ecc-size = <0x1>;
     };
 };
+

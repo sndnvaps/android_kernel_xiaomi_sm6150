@@ -328,10 +328,14 @@ struct ftrace_likely_data {
  *
  *  gcc: https://gcc.gnu.org/onlinedocs/gcc/Statement-Attributes.html#Statement-Attributes
  */
-#if __has_attribute(__fallthrough__)
-# define fallthrough                    __attribute__((__fallthrough__))
-#else
+#ifndef __has_attribute
 # define fallthrough                    do {} while (0)  /* fallthrough */
+#else
+# if __has_attribute(__fallthrough__)
+#  define fallthrough                    __attribute__((__fallthrough__))
+# else
+#  define fallthrough                    do {} while (0)  /* fallthrough */
+# endif
 #endif
 
 #endif /* __LINUX_COMPILER_TYPES_H */

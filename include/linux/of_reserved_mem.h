@@ -3,6 +3,7 @@
 #define __OF_RESERVED_MEM_H
 
 #include <linux/device.h>
+#include <linux/of.h>
 
 struct of_phandle_args;
 struct reserved_mem_ops;
@@ -45,6 +46,7 @@ int early_init_dt_alloc_reserved_memory_arch(phys_addr_t size,
 void fdt_init_reserved_mem(void);
 void fdt_reserved_mem_save_node(unsigned long node, const char *uname,
 			       phys_addr_t base, phys_addr_t size);
+struct reserved_mem *of_reserved_mem_lookup(struct device_node *np);
 #else
 static inline int of_reserved_mem_device_init_by_idx(struct device *dev,
 					struct device_node *np, int idx)
@@ -56,6 +58,10 @@ static inline void of_reserved_mem_device_release(struct device *pdev) { }
 static inline void fdt_init_reserved_mem(void) { }
 static inline void fdt_reserved_mem_save_node(unsigned long node,
 		const char *uname, phys_addr_t base, phys_addr_t size) { }
+static inline struct reserved_mem *of_reserved_mem_lookup(struct device_node *np)
+{
+	return NULL;
+}
 #endif
 
 /**
