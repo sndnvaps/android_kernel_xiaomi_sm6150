@@ -1013,6 +1013,47 @@ early_param("ramoops_memreserve", ramoops_memreserve);
 
 static int __init msm_register_ramoops_device(void)
 {
+	struct device_node *np;
+	struct reserved_mem *rmem;
+	u32 val;
+
+	/*
+	 * Populate ramoops_data from the DT /reserved-memory node,
+	 * so the static platform device gets valid config instead
+	 * of all-zeros.  This avoids relying solely on the
+	 * arch_initcall_sync DT device creation path.
+	 */
+	np = of_find_compatible_node(NULL, NULL, "ramoops");
+	if (np) {
+		rmem = of_reserved_mem_lookup(np);
+		if (rmem) {
+			ramoops_data.mem_size = rmem->size;
+			ramoops_data.mem_address = rmem->base;
+
+			if (of_property_read_u32(np, "record-size", &val) == 0)
+				ramoops_data.record_size = val;
+			if (of_property_read_u32(np, "console-size", &val) == 0)
+				ramoops_data.console_size = val;
+			if (of_property_read_u32(np, "ftrace-size", &val) == 0)
+				ramoops_data.ftrace_size = val;
+			if (of_property_read_u32(np, "pmsg-size", &val) == 0)
+				ramoops_data.pmsg_size = val;
+			if (of_property_read_u32(np, "ecc-size", &val) == 0)
+				ramoops_data.ecc_info.ecc_size = val;
+			ramoops_data.dump_oops =
+				!of_property_read_bool(np, "no-dump-oops");
+
+			pr_info("ramoops: mem 0x%llx+0x%lx, record=0x%lx, console=0x%lx, ftrace=0x%lx, pmsg=0x%lx, ecc=%d\n",
+				ramoops_data.mem_address, ramoops_data.mem_size,
+				ramoops_data.record_size,
+				ramoops_data.console_size,
+				ramoops_data.ftrace_size,
+				ramoops_data.pmsg_size,
+				ramoops_data.ecc_info.ecc_size);
+		}
+		of_node_put(np);
+	}
+
 	pr_info("msm_register_ramoops_device\n");
 	if (platform_device_register(&ramoops_dev))
 		pr_info("Unable to register ramoops platform device\n");
