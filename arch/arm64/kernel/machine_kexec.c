@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/kexec.h>
 #include <linux/libfdt_env.h>
+#include <linux/memblock.h>
 #include <linux/of_fdt.h>
 #include <linux/uaccess.h>
 #include <linux/page-flags.h>
@@ -401,7 +402,7 @@ void machine_kexec(struct kimage *kimage)
 			(PAGE_SIZE * 2);
 		unsigned long *hardboot_list_loc_virt = hardboot_map +
 			(PAGE_SIZE * 2);
-		unsigned long tempdest = hardboot_reserve - (SZ_1M * 128);
+		unsigned long tempdest = memblock_end_of_DRAM() - (SZ_1M * 64);
 		unsigned long *entry;
 		void *dest = NULL;
 
@@ -514,10 +515,12 @@ hardboot_done:
 #ifdef CONFIG_KEXEC_HARDBOOT
 bool arch_kexec_is_hardboot_buffer_range(unsigned long start,
 	unsigned long end) {
-	unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
-	unsigned long tempdest = hardboot_reserve - (SZ_1M * 128);
+	//unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
+	unsigned long tempdest =  memblock_end_of_DRAM() - (SZ_1M * 64);
 	// reserve is the end, tempdest is the start of the buffer
-	return start < hardboot_reserve && end >= tempdest;
+	//return start < hardboot_reserve && end >= tempdest;
+	//when use memblock_end_of_DRAM(), alway return true;
+	return true;
 }
 #endif
 
