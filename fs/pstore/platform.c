@@ -28,6 +28,7 @@
 #include <linux/console.h>
 #include <linux/module.h>
 #include <linux/pstore.h>
+#include <linux/reboot.h>
 #ifdef CONFIG_PSTORE_ZLIB_COMPRESS
 #include <linux/zlib.h>
 #endif
@@ -626,6 +627,44 @@ static void pstore_register_console(void) {}
 static void pstore_unregister_console(void) {}
 #endif
 
+/*
+ * Reboot notifier: save kernel log on normal restart / halt / poweroff
+ * so it appears as dmesg-ramoops-0 on the next boot.
+ */
+static int pstore_reboot_notifier(struct notifier_block *nb,
+				  unsigned long action, void *data)
+{
+	if (!psinfo)
+		return NOTIFY_DONE;
+
+	/*
+	 * Save kernel log before the system restarts.
+	 * This uses KMSG_DUMP_OOPS as reason so it passes both the
+	 * global kmsg_dump filter (reason <= KMSG_DUMP_OOPS) and
+	 * ramoops backend filter (accepts OOPS and PANIC).
+	 */
+	pr_info("saving dmesg on reboot\n");
+	kmsg_dump(KMSG_DUMP_OOPS);
+	pr_info("dmesg save done\n");
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block pstore_reboot_nb = {
+	.notifier_call	= pstore_reboot_notifier,
+	.priority	= INT_MIN,
+};
+
+static void pstore_register_reboot_dumper(void)
+{
+	register_reboot_notifier(&pstore_reboot_nb);
+}
+
+static void pstore_unregister_reboot_dumper(void)
+{
+	unregister_reboot_notifier(&pstore_reboot_nb);
+}
+
 static int pstore_write_user_compat(struct pstore_record *record,
 				    const char __user *buf)
 {
@@ -714,6 +753,10 @@ int pstore_register(struct pstore_info *psi)
 	if (psi->flags & PSTORE_FLAGS_PMSG)
 		pstore_register_pmsg();
 
+	/* Save dmesg on normal reboot / halt / poweroff (non-panic). */
+	if (psi->flags & PSTORE_FLAGS_DMESG)
+		pstore_register_reboot_dumper();
+
 	/* Start watching for new records, if desired. */
 	if (pstore_update_ms >= 0) {
 		pstore_timer.expires = jiffies +
@@ -750,6 +793,8 @@ void pstore_unregister(struct pstore_info *psi)
 		pstore_unregister_console();
 	if (psi->flags & PSTORE_FLAGS_DMESG)
 		pstore_unregister_kmsg();
+	if (psi->flags & PSTORE_FLAGS_DMESG)
+		pstore_unregister_reboot_dumper();
 
 	free_buf_for_compression();
 

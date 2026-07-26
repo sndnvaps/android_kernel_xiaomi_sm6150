@@ -309,11 +309,13 @@ static void msm_restart_prepare(const char *cmd)
 		if (get_dload_mode() ||
 			in_panic ||
 			((cmd != NULL && cmd[0] != '\0') &&
-			!strcmp(cmd, "edl")))
+			!strcmp(cmd, "edl")) ||
+			cmd == NULL)
 			need_warm_reset = true;
 	} else {
 		need_warm_reset = (get_dload_mode() ||
 				in_panic ||
+				cmd == NULL ||
 				(cmd != NULL && cmd[0] != '\0'));
 	}
 
