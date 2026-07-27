@@ -40,6 +40,10 @@
 #include <linux/of_reserved_mem.h>
 #include <linux/memblock.h>
 
+#ifdef CONFIG_KEXEC_HARDBOOT
+#include <asm/kexec.h>
+#endif
+
 #define RAMOOPS_KERNMSG_HDR "===="
 #define MIN_MEM_SIZE 4096UL
 #if __BITS_PER_LONG == 64
@@ -1063,9 +1067,9 @@ core_initcall(msm_register_ramoops_device);
 
 #ifdef CONFIG_KEXEC_HARDBOOT
 // Hardboot: reserve 1MB of space 
-// before ramoops address of 0xa1600000
+// before ramoops address of 0xa1700000
 static int __init kexec_memory_reserve(void) {
-	unsigned long long mem_start = 0xa1500000;
+	unsigned long long mem_start = KEXEC_HB_PAGE_ADDR;
     /* 该地址不在 System RAM 中，无需从 memblock 移除 */
     /* 但确认它没有和其他已知保留区域冲突 */
     if (memblock_is_region_reserved(mem_start, SZ_1M))

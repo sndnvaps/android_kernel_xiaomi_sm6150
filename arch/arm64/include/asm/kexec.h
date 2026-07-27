@@ -32,7 +32,7 @@
 #ifdef CONFIG_KEXEC_HARDBOOT
 #define KEXEC_HB_PAGE_MAGIC 0x4a5db007
 // Hardboot: for Xiaomi Note7(Violet). Address reserved in pstore/ram.c
-#define KEXEC_HB_PAGE_ADDR 0xa1500000
+#define KEXEC_HB_PAGE_ADDR 0xa1600000
 #endif
 
 #ifndef __ASSEMBLY__

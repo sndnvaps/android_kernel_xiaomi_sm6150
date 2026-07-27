@@ -210,11 +210,12 @@ int machine_kexec_prepare(struct kimage *kimage)
 	arm64_kexec_hardboot = kimage->hardboot;
 	pr_info("machine_kexec_prepare: hardboot=%d\n", kimage->hardboot);
 
+	/*
+	 * Check last hardboot status, skip if ioremap fails (e.g.
+	 * KEXEC_HB_PAGE is a no-map reserved region not yet mapped).
+	 */
 	hardboot_page = ioremap(KEXEC_HB_PAGE_ADDR, SZ_1M);
-	if (!hardboot_page) {
-		pr_err("machine_kexec_prepare: ioremap failed for 0x%x\n",
-			KEXEC_HB_PAGE_ADDR);
-	} else {
+	if (hardboot_page) {
 		pr_info("Last hardboot status: %lx\n", hardboot_page[0]);
 		iounmap(hardboot_page);
 	}
@@ -397,14 +398,37 @@ void machine_kexec(struct kimage *kimage)
 	if (kimage->hardboot) {
 		unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
 		void *hardboot_map = ioremap(hardboot_reserve, SZ_1M);
-		void *post_reboot_code_buffer = hardboot_map + PAGE_SIZE;
-		unsigned long post_reboot_list_loc = hardboot_reserve +
-			(PAGE_SIZE * 2);
-		unsigned long *hardboot_list_loc_virt = hardboot_map +
-			(PAGE_SIZE * 2);
-		unsigned long tempdest = memblock_end_of_DRAM() - (SZ_1M * 64);
+		void *post_reboot_code_buffer;
+		unsigned long post_reboot_list_loc;
+		unsigned long *hardboot_list_loc_virt;
+		unsigned long tempdest;
 		unsigned long *entry;
 		void *dest = NULL;
+
+		if (!hardboot_map) {
+			pr_err("Hardboot: ioremap failed for 0x%lx\n",
+				hardboot_reserve);
+			/* Fall back to normal kexec - copy relocator code */
+			memcpy(reboot_code_buffer, arm64_relocate_new_kernel,
+				arm64_relocate_new_kernel_size);
+			__flush_dcache_area(reboot_code_buffer,
+				arm64_relocate_new_kernel_size);
+			flush_icache_range((uintptr_t)reboot_code_buffer,
+				(uintptr_t)reboot_code_buffer +
+				arm64_relocate_new_kernel_size);
+			goto hardboot_skip;
+		}
+		post_reboot_code_buffer = hardboot_map + PAGE_SIZE;
+		post_reboot_list_loc = hardboot_reserve + (PAGE_SIZE * 2);
+		hardboot_list_loc_virt = hardboot_map + (PAGE_SIZE * 2);
+		tempdest = memblock_end_of_DRAM() - (SZ_1M * 64);
+
+		/* Verify hardboot page is readable/writable */
+		{
+			unsigned long test_val;
+			test_val = readl_relaxed(hardboot_map);
+			writel_relaxed(test_val, hardboot_map);
+		}
 
 		// Step 1: modify original list and create post-reboot list
 		kexec_list_hardboot_create_post_reboot_list(kimage->head,
@@ -485,6 +509,10 @@ hardboot_done:
 			arm64_relocate_new_kernel_size);
 	}
 
+#ifdef CONFIG_KEXEC_HARDBOOT
+hardboot_skip:
+#endif
+
 	/* Flush the kimage list and its buffers. */
 	kexec_list_flush(kimage);
 
@@ -515,12 +543,18 @@ hardboot_done:
 #ifdef CONFIG_KEXEC_HARDBOOT
 bool arch_kexec_is_hardboot_buffer_range(unsigned long start,
 	unsigned long end) {
-	//unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
-	unsigned long tempdest =  memblock_end_of_DRAM() - (SZ_1M * 64);
-	// reserve is the end, tempdest is the start of the buffer
-	//return start < hardboot_reserve && end >= tempdest;
-	//when use memblock_end_of_DRAM(), alway return true;
-	return true;
+	unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
+	unsigned long tempdest = memblock_end_of_DRAM() - (SZ_1M * 64);
+
+	/* hardboot page area: 1MB at KEXEC_HB_PAGE_ADDR */
+	if (start < hardboot_reserve + SZ_1M && end > hardboot_reserve)
+		return true;
+
+	/* temp space area: 64MB at DRAM_END - 64MB */
+	if (start < tempdest + (SZ_1M * 64) && end > tempdest)
+		return true;
+
+	return false;
 }
 #endif
 
