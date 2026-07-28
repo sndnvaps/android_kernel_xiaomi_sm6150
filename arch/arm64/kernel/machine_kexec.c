@@ -354,8 +354,11 @@ void machine_kexec(struct kimage *kimage)
 
 	/*
 	 * New cpus may have become stuck_in_kernel after we loaded the image.
+	 * For hardboot, skip the online-CPU check since warm reset will
+	 * cleanly restart all cores anyway.
 	 */
-	BUG_ON(!in_kexec_crash && (stuck_cpus || (num_online_cpus() > 1)));
+	if (!kimage->hardboot)
+		BUG_ON(!in_kexec_crash && (stuck_cpus || (num_online_cpus() > 1)));
 	WARN(in_kexec_crash && (stuck_cpus || smp_crash_stop_failed()),
 		"Some CPUs may be stale, kdump will be unreliable.\n");
 
