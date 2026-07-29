@@ -155,18 +155,25 @@ second_not_hardboot:
 
 #ifdef CONFIG_KEXEC_HARDBOOT
 hardboot:
-	/* Stash boot arguments in hardboot page:
-	 * 0: KEXEC_HB_PAGE_MAGIC
-	 * 8: kexec_kimage_start
+	/* Stash boot arguments in hardboot page for diagnostics:
+	 * 0: 0xfeedf00d (consumed marker, not KEXEC_HB_PAGE_MAGIC,
+	 *                 so next boot's head.S won't loop)
+	 * 8: entry point
+	 * 16: DTB address
 	 */
-	ldr	x0, =KEXEC_HB_PAGE_ADDR
-	ldr	x1, =KEXEC_HB_PAGE_MAGIC
-	str	x1, [x0]
-	/* Processor specific reboot code. */
-	/* SM6150 version. */
-	ldr	x0, =MPM2_MPM_PS_HOLD
-	str	xzr, [x0]
-loop:	b	loop
+	ldr	x22, =KEXEC_HB_PAGE_ADDR
+	ldr	x23, =(0xfeedf00d)
+	str	x23, [x22]
+	ldr	x17, arm64_kexec_kimage_start
+	ldr	x0, arm64_kexec_dtb_addr
+	str	x17, [x22, #8]
+	str	x0, [x22, #16]
+	str	xzr, [x22, #24]
+	/* Jump directly to new kernel */
+	mov	x1, xzr
+	mov	x2, xzr
+	mov	x3, xzr
+	br	x17
 #endif
 ENDPROC(arm64_relocate_new_kernel)
 

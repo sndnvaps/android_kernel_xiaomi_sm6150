@@ -400,7 +400,7 @@ void machine_kexec(struct kimage *kimage)
 #ifdef CONFIG_KEXEC_HARDBOOT
 	if (kimage->hardboot) {
 		unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
-		void *hardboot_map = ioremap(hardboot_reserve, SZ_1M);
+		void *hardboot_map = ioremap_cache(hardboot_reserve, SZ_1M);
 		void *post_reboot_code_buffer;
 		unsigned long post_reboot_list_loc;
 		unsigned long *hardboot_list_loc_virt;
@@ -426,16 +426,16 @@ void machine_kexec(struct kimage *kimage)
 		hardboot_list_loc_virt = hardboot_map + (PAGE_SIZE * 2);
 		tempdest = memblock_end_of_DRAM() - (SZ_1M * 64);
 
-		/* Verify hardboot page is readable/writable */
-		{
-			unsigned long test_val;
-			test_val = readl_relaxed(hardboot_map);
-			writel_relaxed(test_val, hardboot_map);
-		}
+		pr_info("Hardboot: ioremap ok, tempdest=0x%lx\n", tempdest);
 
 		// Step 1: modify original list and create post-reboot list
 		kexec_list_hardboot_create_post_reboot_list(kimage->head,
 			hardboot_list_loc_virt, tempdest);
+
+		/* Disable IRQs during copy to prevent workqueue
+		 * preemption (page reclaim etc. may fault after
+		 * device_shutdown has torn down drivers). */
+		local_irq_disable();
 
 		// Step 2: walk the modified list and copy kernel to temp space
 		pr_info("Hardboot: copying kernel to temp space 0x%lx\n",
