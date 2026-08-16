@@ -38,18 +38,13 @@
  */
 ENTRY(arm64_relocate_new_kernel)
 
-	ldr	x22, =KEXEC_HB_PAGE_ADDR
-	ldr	x23, =(0xdeaf0000)
-	str	x23, [x22]
-	ldr	x24, arm64_kexec_hardboot
-	cbz	x24, first_not_hardboot //判断x24寄存器是否为0，若为0，跳转到first_not_hardboot标签处
-	str	x23, [x22, #56]
-first_not_hardboot:
-	/* Setup the list loop variables. */
-	//mov	x17, x1				/* x17 = kimage_start */
-	//mov	x16, x0				/* x16 = kimage_head */
-	mov x17, x1					/* x17 = kimage_start */
-	ldr x16, arm64_kexec_kimage_head	/* x16 = list entry */
+	/* Setup the list loop variables.
+	 * Save params from registers: x0=kimage_head, x1=kimage_start,
+	 * x2=dtb_addr. These are trashed by copy_page during relocation.
+	 */
+	mov	x17, x1				/* x17 = kimage_start */
+	mov	x19, x2				/* x19 = dtb_addr */
+	mov	x16, x0				/* x16 = kimage_head */
 	raw_dcache_line_size x15, x0		/* x15 = dcache line size */
 	mov	x14, xzr			/* x14 = entry ptr */
 	mov	x13, xzr			/* x13 = copy dest */
@@ -112,16 +107,6 @@ first_not_hardboot:
 	/* entry = *ptr++ */
 	ldr	x16, [x14], #8
 
-	ldr	x24, arm64_kexec_hardboot  
-	cbz	x24, second_not_hardboot	//判断x24寄存器是否为0，若为0，跳转到second_not_hardboot标签处
-	ldr	x22, =KEXEC_HB_PAGE_ADDR	//
-
-	ldr	x23, [x22, #56]
-
-	add	x23, x23, #1
-	str	x23, [x22, #56]
-second_not_hardboot:
-
 	/* while (!(entry & DONE)) */
 	tbz	x16, IND_DONE_BIT, .Lloop
 
@@ -132,21 +117,8 @@ second_not_hardboot:
 	dsb	nsh
 	isb
 
-#ifdef CONFIG_KEXEC_HARDBOOT
-	ldr	x0, arm64_kexec_hardboot  // 将arm64_kexec_hardboot的值传给x0寄存器，（0，1）
-	cbnz	x0, hardboot			//如果寄存器x0的值不为0，跳转到hardboot 标签处，执行指令
-#endif
-	ldr	x22, =KEXEC_HB_PAGE_ADDR
-	ldr	x23, =(0xfeedf00d)
-	str	x23, [x22]
-
 	/* Start new image. */
-	ldr x17, arm64_kexec_kimage_start
-	ldr	x0, arm64_kexec_dtb_addr
-
-	str	x17, [x22, #8]
-	str	x0, [x22, #16]
-	str	xzr, [x22, #24]
+	mov	x0, x19				/* x0 = dtb_addr (saved from x2) */
 
 	mov	x1, xzr
 	mov	x2, xzr

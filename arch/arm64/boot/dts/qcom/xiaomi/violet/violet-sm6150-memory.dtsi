@@ -54,8 +54,8 @@
 };
 
 &reserved_memory {
-    hardboot_page: hardboot_page@a1600000 {
-        reg = <0 0xa1600000 0 0x100000>;
+    hardboot_page: hardboot_page@9e200000 {
+        reg = <0 0x9e200000 0 0x100000>;
         no-map;
     };
 

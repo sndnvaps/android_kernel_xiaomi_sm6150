@@ -750,7 +750,13 @@ static struct platform_driver msm_restart_driver = {
 static void msm_kexec_hardboot_hook(void)
 {
 	set_dload_mode(0);
+	qpnp_pon_set_restart_reason(PON_RESTART_REASON_NORMAL);
 	qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+	/* Drop PS_HOLD directly — no SCM, no SPMI halt.
+	 * deassert_ps_hold() calls scm_disable_sdi+halt_spmi
+	 * which can confuse the bootloader.
+	 */
+	__raw_writel(0, msm_ps_hold);
 }
 #endif
 

@@ -162,24 +162,13 @@ setup_hardboot:
 	/* x21 = KEXEC_HB_PAGE_ADDR = 0xa1600000 */
 	/* Clear hardboot page magic to avoid boot loop. */
 	str	xzr, [x21]
-	/* Set arm64_kexec_hardboot = 1 so relocator knows it's hardboot */
-	adr_l	x0, arm64_kexec_hardboot
-	mov	x1, #1
-	str	x1, [x0]
-	/* Set arm64_kexec_kimage_head = IND_INDIRECTION | post_reboot_list */
-	/* list is at hardboot_page + 2 * PAGE_SIZE = 0xa1602000 */
+	/* x0 = post-reboot list at hardboot_page + 2 * PAGE_SIZE */
 	add	x0, x21, #(PAGE_SIZE * 2)
-	orr	x0, x0, #0x2		/* IND_INDIRECTION flag */
-	adr_l	x1, arm64_kexec_kimage_head
-	str	x0, [x1]
-	/* Set arm64_kexec_kimage_start from hb[1] (offset 8) */
-	ldr	x0, [x21, #8]
-	adr_l	x1, arm64_kexec_kimage_start
-	str	x0, [x1]
-	/* Set arm64_kexec_dtb_addr from hb[2] (offset 16) */
-	ldr	x0, [x21, #16]
-	adr_l	x1, arm64_kexec_dtb_addr
-	str	x0, [x1]
+	orr	x0, x0, #0x2		/* IND_INDIRECTION */
+	/* x1 = kernel entry (hb[1] at offset 8) */
+	ldr	x1, [x21, #8]
+	/* x2 = dtb address (hb[2] at offset 16) */
+	ldr	x2, [x21, #16]
 	/* Jump to post-reboot relocation code at hardboot_page + PAGE_SIZE */
 	add	x21, x21, #PAGE_SIZE
 	br	x21

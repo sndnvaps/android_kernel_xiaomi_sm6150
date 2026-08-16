@@ -352,6 +352,9 @@ void machine_kexec(struct kimage *kimage)
 	bool in_kexec_crash = (kimage == kexec_crash_image);
 	bool stuck_cpus = cpus_are_stuck_in_kernel();
 
+	pr_emerg("machine_kexec: entered, hardboot=%d, cpus=%d\n",
+		kimage->hardboot, num_online_cpus());
+
 	/*
 	 * New cpus may have become stuck_in_kernel after we loaded the image.
 	 * For hardboot, skip the online-CPU check since warm reset will
@@ -363,11 +366,16 @@ void machine_kexec(struct kimage *kimage)
 		"Some CPUs may be stale, kdump will be unreliable.\n");
 
 	arm64_kexec_kimage_head = kimage->head;
+	pr_emerg("machine_kexec: head set, page_to_phys...\n");
 	reboot_code_buffer_phys = page_to_phys(kimage->control_code_page);
+	pr_emerg("machine_kexec: phys=%pa, phys_to_virt...\n",
+		&reboot_code_buffer_phys);
 	reboot_code_buffer = phys_to_virt(reboot_code_buffer_phys);
+	pr_emerg("machine_kexec: before hardboot block\n");
 
 	kexec_image_info(kimage);
 
+	/*
 	pr_debug("%s:%d: control_code_page:        %p\n", __func__, __LINE__,
 		kimage->control_code_page);
 	pr_debug("%s:%d: reboot_code_buffer_phys:  %pa\n", __func__, __LINE__,
@@ -386,6 +394,7 @@ void machine_kexec(struct kimage *kimage)
 		arm64_kexec_kimage_head);
 	pr_debug("%s:%d: kexec_kimage_start:       %ld\n", __func__, __LINE__,
 		arm64_kexec_kimage_start);
+	*/
 
 	/*
 	 * Copy arm64_relocate_new_kernel to the reboot_code_buffer for use
@@ -400,25 +409,24 @@ void machine_kexec(struct kimage *kimage)
 #ifdef CONFIG_KEXEC_HARDBOOT
 	if (kimage->hardboot) {
 		unsigned long hardboot_reserve = KEXEC_HB_PAGE_ADDR;
-		void *hardboot_map = ioremap_cache(hardboot_reserve, SZ_1M);
+		void *hardboot_map;
 		void *post_reboot_code_buffer;
 		unsigned long post_reboot_list_loc;
 		unsigned long *hardboot_list_loc_virt;
 		unsigned long tempdest;
+		unsigned long *h;
 		unsigned long *entry;
 		void *dest = NULL;
 
+		/*
+		 * Use ioremap_cache (Normal Cacheable). The hardboot
+		 * page is at 0x9e200000, well inside regular DDR and
+		 * far from any TZ-protected secure regions.
+		 */
+		pr_emerg("machine_kexec: before ioremap_cache\n");
+		hardboot_map = ioremap_cache(hardboot_reserve, SZ_1M);
 		if (!hardboot_map) {
-			pr_err("Hardboot: ioremap failed for 0x%lx\n",
-				hardboot_reserve);
-			/* Fall back to normal kexec - copy relocator code */
-			memcpy(reboot_code_buffer, arm64_relocate_new_kernel,
-				arm64_relocate_new_kernel_size);
-			__flush_dcache_area(reboot_code_buffer,
-				arm64_relocate_new_kernel_size);
-			flush_icache_range((uintptr_t)reboot_code_buffer,
-				(uintptr_t)reboot_code_buffer +
-				arm64_relocate_new_kernel_size);
+			pr_err("Hardboot: ioremap_cache failed\n");
 			goto hardboot_skip;
 		}
 		post_reboot_code_buffer = hardboot_map + PAGE_SIZE;
@@ -426,26 +434,19 @@ void machine_kexec(struct kimage *kimage)
 		hardboot_list_loc_virt = hardboot_map + (PAGE_SIZE * 2);
 		tempdest = memblock_end_of_DRAM() - (SZ_1M * 64);
 
-		pr_info("Hardboot: ioremap ok, tempdest=0x%lx\n", tempdest);
-
-		// Step 1: modify original list and create post-reboot list
+		pr_emerg("machine_kexec: before kexec_list_hardboot_create_post_reboot_list\n");
+		/* Step 1: create post-reboot list at hardboot_page+8KB */
 		kexec_list_hardboot_create_post_reboot_list(kimage->head,
 			hardboot_list_loc_virt, tempdest);
 
-		/* Disable IRQs during copy to prevent workqueue
-		 * preemption (page reclaim etc. may fault after
-		 * device_shutdown has torn down drivers). */
+		pr_emerg("machine_kexec: before local_irq_disable\n");
+		/* Step 2: copy kernel segments to temp space */
 		local_irq_disable();
-
-		// Step 2: walk the modified list and copy kernel to temp space
-		pr_info("Hardboot: copying kernel to temp space 0x%lx\n",
-			tempdest);
 		for (entry = &kimage->head; ; entry++) {
 			unsigned int flag = *entry &
 				(IND_DESTINATION | IND_INDIRECTION |
 				 IND_DONE | IND_SOURCE);
 			void *addr = phys_to_virt(*entry & PAGE_MASK);
-
 			switch (flag) {
 			case IND_INDIRECTION:
 				entry = (unsigned long *)addr - 1;
@@ -462,37 +463,49 @@ void machine_kexec(struct kimage *kimage)
 			}
 		}
 hardboot_done:
-		pr_info("Hardboot: copy done, setting up hardboot page\n");
+		pr_emerg("machine_kexec: before flush_dcache_area\n");
+		/* Flush temp copy to DDR */
+		__flush_dcache_area(phys_to_virt(tempdest),
+			(unsigned long)dest - (unsigned long)phys_to_virt(tempdest));
 
-		// Step 3: write magic + entry + dtb to hardboot page
-		{
-			unsigned long *hb = (unsigned long *)hardboot_map;
-			hb[0] = KEXEC_HB_PAGE_MAGIC;
-			hb[1] = arm64_kexec_kimage_start;
-			hb[2] = arm64_kexec_dtb_addr;
-		}
+		/* Step 3: write magic + entry + dtb to hardboot page */
+		h = (unsigned long *)hardboot_map;
+		h[0] = KEXEC_HB_PAGE_MAGIC;
+		h[1] = arm64_kexec_kimage_start;
+		h[2] = arm64_kexec_dtb_addr;
+		pr_emerg("machine_kexec: before flush_dcache_area just the 24 bytes to DDR\n");
+		/* Flush just the 24 bytes to DDR, then read back */
+		__flush_dcache_area(h, 24);
+		dsb(sy);
+		mb();
+		(void)h[0];
+		(void)h[1];
+		(void)h[2];
 
-		// Step 4: setup post-reboot relocator
-		arm64_kexec_kimage_head = IND_INDIRECTION | post_reboot_list_loc;
-		arm64_kexec_hardboot = 0;
+		pr_emerg("machine_kexec: before copy relocator to hardboot_page\n");
+		/* Step 4: copy relocator to hardboot_page + PAGE_SIZE */
 		memcpy(post_reboot_code_buffer, arm64_relocate_new_kernel,
 			arm64_relocate_new_kernel_size);
 
-		// Step 5: flush everything
+		pr_emerg("machine_kexec: before flush hardboot page to DDR\n");
+		/* Step 5: flush hardboot page to DDR */
 		__flush_dcache_area(hardboot_map, SZ_1M);
 		flush_icache_range((uintptr_t)post_reboot_code_buffer,
 			(uintptr_t)post_reboot_code_buffer +
 			arm64_relocate_new_kernel_size);
 
+		pr_emerg("machine_kexec: before dsb(sy)\n");
+		/* WC buffer may need system barrier to reach DDR controller */
+		dsb(sy);
+		pr_emerg("machine_kexec: before iounmap()\n");
 		iounmap(hardboot_map);
 
-		// Step 6: call the PMIC/SCM hook to trigger warm reset
-		pr_info("Hardboot: triggering warm reset\n");
+		/* Step 6: trigger PMIC warm reset */
+		pr_emerg("Hardboot: triggering warm reset\n");
 		if (kexec_hardboot_hook)
 			kexec_hardboot_hook();
 
-		// If hook returns, fall through to standard reboot path
-		pr_info("Hardboot: hook returned, falling back\n");
+		/* If hook returns, fall through to standard kexec */
 		memcpy(reboot_code_buffer, arm64_relocate_new_kernel,
 			arm64_relocate_new_kernel_size);
 		__flush_dcache_area(reboot_code_buffer,
@@ -538,7 +551,8 @@ hardboot_skip:
 	 */
 
 	cpu_soft_restart_kexec(kimage != kexec_crash_image,
-		reboot_code_buffer_phys, kimage->head, kimage->start, 0);
+		reboot_code_buffer_phys, kimage->head, kimage->start,
+		arm64_kexec_dtb_addr);
 
 	BUG(); /* Should never get here. */
 }
